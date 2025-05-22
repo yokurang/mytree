@@ -1,8 +1,3 @@
-Here is a clean, concise `README.md` with no emojis or icons:
-
----
-
-````markdown
 # rtree
 
 **rtree** is a command-line utility for visualizing directory structures, similar to the Unix `tree` command, with additional features like extension filtering, hidden file support, long-format output, and optional output redirection.
@@ -62,4 +57,3 @@ cargo run --bin gendoc
 ## License
 
 This project is licensed under the MIT License.
----
