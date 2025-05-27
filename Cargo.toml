@@ -3,6 +3,14 @@ name = "rtree"
 version = "0.1.0"
 edition = "2024"
 authors = ["Alan Matthew"]
+description = "A fast CLI tool to visualize directory structures with filtering and formatting"
+readme = "README.md"
+repository = "https://github.com/yokurang/rtree"
+homepage = "https://github.com/yokurang/rtree"
+documentation = "https://docs.rs/rtree"
+license = "MIT"
+keywords = ["tree", "cli", "filesystem"]
+categories = ["command-line-utilities"]
 default-run = "rtree"
 
 [dependencies]
