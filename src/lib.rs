@@ -315,6 +315,7 @@ fn read_filtered_entries(
     entries_meta.sort_by(|a, b| {
         a.type_priority
             .cmp(&b.type_priority)
+            .then_with(|| a.ext.cmp(&b.ext))
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
