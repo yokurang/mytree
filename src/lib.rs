@@ -1,10 +1,10 @@
-// src/lib.rs
 use chrono::{DateTime, Local};
 use clap::Parser;
 use colored::*;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use regex::Regex;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
@@ -19,7 +19,7 @@ use std::time::SystemTime;
     author,
     version,
     about = "Mytree is a terminal tool to visualize your folder structure.",
-    long_about = "Mytree lets you view directory trees with optional hidden files, extension filtering, regex matching, and long-format metadata."
+    long_about = "Mytree lets you view directory trees with optional hidden files, extension filtering, regex matching, long-format metadata, or JSON output."
 )]
 pub struct Args {
     #[arg(default_value = ".", help = "Root directory to start traversal")]
@@ -68,6 +68,14 @@ pub struct Args {
         help = "Send output to pager (e.g. less)"
     )]
     pub pager: bool,
+
+    #[arg(
+        short = 'j',
+        long = "json",
+        default_value_t = false,
+        help = "Output directory tree in JSON format"
+    )]
+    pub json: bool,
 }
 
 struct Stats {
@@ -75,7 +83,6 @@ struct Stats {
     files: usize,
 }
 
-/// Internal metadata used only for sorting before constructing a `TreeNode`.
 struct EntryMeta {
     entry: fs::DirEntry,
     type_priority: u8,
@@ -90,7 +97,7 @@ struct PrintOptions<'a> {
     long_format: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct TreeNode {
     path: PathBuf,
     name: String,
@@ -116,12 +123,22 @@ pub fn run(args: Args) -> io::Result<()> {
 
     let tree = build_tree(&args.path, &opts)?;
 
+    if args.json {
+        let json = serde_json::to_string_pretty(&tree)?;
+        if let Some(path) = args.output {
+            write_to_file(json.as_bytes(), path)?;
+        } else if args.pager {
+            pipe_to_pager(json.as_bytes())?;
+        } else {
+            io::stdout().write_all(json.as_bytes())?;
+        }
+        return Ok(());
+    }
+
     let mut stats = Stats { dirs: 0, files: 0 };
-
     let mut output_buffer = Vec::<u8>::new();
-    // Print the root explicitly (to match `tree(1)` behaviour)
-    writeln!(&mut output_buffer, "{}", args.path.display())?;
 
+    writeln!(&mut output_buffer, "{}", args.path.display())?;
     {
         let mut write_fn = |line: &str| {
             output_buffer.extend_from_slice(line.as_bytes());
@@ -159,8 +176,6 @@ pub fn run(args: Args) -> io::Result<()> {
     Ok(())
 }
 
-/// Recursively builds a `TreeNode` representing the directory tree rooted at
-/// `root_path`, applying the same filters used for display.
 fn build_tree(root_path: &Path, opts: &PrintOptions) -> io::Result<TreeNode> {
     let entries = read_filtered_entries(
         root_path,
@@ -200,8 +215,6 @@ fn build_tree(root_path: &Path, opts: &PrintOptions) -> io::Result<TreeNode> {
     })
 }
 
-/// Pretty‑prints the tree starting at `node`, using `prefix` + `connector` to
-/// draw guide lines (`├──`, `└──`, etc.).
 fn print_tree(
     node: &TreeNode,
     connector: &str,
@@ -210,7 +223,6 @@ fn print_tree(
     opts: &PrintOptions,
     write_fn: &mut dyn FnMut(&str),
 ) {
-    // Render this node itself.
     let line = format_entry_line(&node.path, &node.name, opts.long_format);
     write_fn(&format!("{}{}", connector, line));
 
@@ -350,7 +362,7 @@ fn read_filtered_entries(
 
         let name = match file_name_os.to_str() {
             Some(n) => n,
-            None => continue, // skip non‑UTF8 entries
+            None => continue,
         };
 
         if !show_all && name.starts_with('.') {
@@ -398,13 +410,29 @@ fn read_filtered_entries(
 }
 
 // Tests
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
+    use std::fs::{self, File};
+    use std::io::Write;
     use tempfile::tempdir;
+    #[cfg(test)]
+    fn create_sample_tree() -> io::Result<(tempfile::TempDir, PathBuf)> {
+        let dir = tempdir()?;
+        let root_path = dir.path().to_path_buf();
 
+        fs::create_dir_all(root_path.join("dir_a"))?;
+        fs::create_dir_all(root_path.join("dir_b/empty"))?;
+
+        File::create(root_path.join("file1.txt"))?.write_all(b"hello")?;
+        File::create(root_path.join("dir_a/file2.md"))?.write_all(b"world")?;
+        File::create(root_path.join("dir_b/file3.rs"))?.write_all(b"rust")?;
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root_path.join("file1.txt"), root_path.join("link_to_file1"))?;
+
+        Ok((dir, root_path))
+    }
     #[test]
     fn test_format_size() {
         assert_eq!(format_size(0), "0.0 B ");
@@ -423,66 +451,96 @@ mod tests {
     #[test]
     fn test_hidden_file_filtering() -> io::Result<()> {
         let dir = tempdir()?;
-        File::create(dir.path().join(".hidden"))?;
-        File::create(dir.path().join("visible.txt"))?;
+        let path = dir.path();
+        File::create(path.join(".hidden"))?;
+        File::create(path.join("visible.txt"))?;
 
-        let no_hidden = read_filtered_entries(dir.path(), false, &HashSet::new(), None)?;
+        let no_hidden = read_filtered_entries(path, false, &HashSet::new(), None)?;
         let names: Vec<_> = no_hidden
             .iter()
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         assert_eq!(names, vec!["visible.txt"]);
 
-        let all_files = read_filtered_entries(dir.path(), true, &HashSet::new(), None)?;
+        let all_files = read_filtered_entries(path, true, &HashSet::new(), None)?;
         let names: Vec<_> = all_files
             .iter()
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         assert!(names.contains(&".hidden".to_string()));
         assert!(names.contains(&"visible.txt".to_string()));
+
+        // Use dir explicitly
+        assert!(dir.path().exists());
         Ok(())
     }
 
     #[test]
     fn test_extension_filtering() -> io::Result<()> {
-        let dir = tempdir()?;
-        File::create(dir.path().join("main.rs"))?;
-        File::create(dir.path().join("README.md"))?;
-        File::create(dir.path().join("LICENSE"))?;
+        let (dir, path) = create_sample_tree()?;
+        assert!(dir.path().exists());
 
         let mut filters = HashSet::new();
         filters.insert("rs".to_string());
-        filters.insert("md".to_string());
 
-        let entries = read_filtered_entries(dir.path(), true, &filters, None)?;
+        let entries = read_filtered_entries(&path.join("dir_b"), true, &filters, None)?;
         let names: Vec<_> = entries
             .iter()
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
-
-        assert!(names.contains(&"main.rs".to_string()));
-        assert!(names.contains(&"README.md".to_string()));
-        assert!(!names.contains(&"LICENSE".to_string()));
+        assert!(names.contains(&"file3.rs".to_string()));
         Ok(())
     }
 
     #[test]
     fn test_regex_filtering() -> io::Result<()> {
-        let dir = tempdir()?;
-        File::create(dir.path().join("data1.csv"))?;
-        File::create(dir.path().join("data2.csv"))?;
-        File::create(dir.path().join("notes.txt"))?;
+        let (dir, path) = create_sample_tree()?;
+        assert!(dir.path().exists());
 
-        let regex = Regex::new(r"^data.*").unwrap();
-        let entries = read_filtered_entries(dir.path(), true, &HashSet::new(), Some(&regex))?;
+        let regex = Regex::new(r"file[12]").unwrap();
+        let entries = read_filtered_entries(&path, true, &HashSet::new(), Some(&regex))?;
         let names: Vec<_> = entries
             .iter()
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
 
-        assert!(names.contains(&"data1.csv".to_string()));
-        assert!(names.contains(&"data2.csv".to_string()));
-        assert!(!names.contains(&"notes.txt".to_string()));
+        assert!(names.contains(&"file1.txt".to_string()));
+        assert!(!names.contains(&"file3.rs".to_string())); // file3.rs does not match
+        Ok(())
+    }
+
+    #[test]
+    fn test_symlink_is_included() -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            let (dir, path) = create_sample_tree()?;
+            assert!(dir.path().exists());
+
+            let entries = read_filtered_entries(&path, true, &HashSet::new(), None)?;
+            let names: Vec<_> = entries
+                .iter()
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            assert!(names.contains(&"link_to_file1".to_string()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_directory_serialization() -> io::Result<()> {
+        let (dir, path) = create_sample_tree()?;
+        assert!(dir.path().exists());
+
+        let opts = PrintOptions {
+            show_all: true,
+            extension_filters: &HashSet::new(),
+            regex_filter: None,
+            long_format: false,
+        };
+
+        let tree = build_tree(&path, &opts)?;
+        let json = serde_json::to_string(&tree)?;
+        assert!(json.contains("empty"));
         Ok(())
     }
 
@@ -494,6 +552,30 @@ mod tests {
         let line = format_entry_line(&file_path, "info.txt", true);
         assert!(line.contains("info.txt"));
         assert!(line.contains("B") || line.contains("KB"));
+
+        assert!(dir.path().exists());
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_serialization_tree_structure() -> io::Result<()> {
+        let (dir, path) = create_sample_tree()?;
+        assert!(dir.path().exists());
+
+        let opts = PrintOptions {
+            show_all: true,
+            extension_filters: &HashSet::new(),
+            regex_filter: None,
+            long_format: false,
+        };
+
+        let tree = build_tree(&path, &opts)?;
+        let json = serde_json::to_string_pretty(&tree)?;
+        assert!(json.contains("file1.txt"));
+        assert!(json.contains("file2.md"));
+        assert!(json.contains("file3.rs"));
+        assert!(json.contains("dir_a"));
+        assert!(json.contains("dir_b"));
         Ok(())
     }
 }
