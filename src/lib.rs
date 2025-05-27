@@ -4,11 +4,12 @@ use clap::Parser;
 use colored::*;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::io::Write;
-use std::os::unix::fs::FileTypeExt;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
@@ -18,23 +19,12 @@ use std::time::SystemTime;
     author,
     version,
     about = "Rtree is a terminal tool to visualize your folder structure.",
-    long_about = "Rtree lets you view directory trees with optional depth control, hidden files, extension filtering, and long-format metadata."
+    long_about = "Rtree lets you view directory trees with optional hidden files, extension filtering, regex matching, and long-format metadata."
 )]
-
 pub struct Args {
-    /// Root directory to start traversal
     #[arg(default_value = ".", help = "Root directory to start traversal")]
     pub path: PathBuf,
 
-    /// Maximum depth to traverse (e.g., -d 2)
-    #[arg(
-        short = 'd',
-        long = "depth",
-        help = "Maximum depth to display (e.g. -d 2)"
-    )]
-    pub max_depth: Option<usize>,
-
-    /// Show hidden files (e.g., .git, .env)
     #[arg(
         short = 'a',
         long = "all",
@@ -43,7 +33,6 @@ pub struct Args {
     )]
     pub all: bool,
 
-    /// Only show files with these extensions (e.g., -e rs -e md)
     #[arg(
         short = 'e',
         long = "extension",
@@ -51,7 +40,13 @@ pub struct Args {
     )]
     pub extensions: Vec<String>,
 
-    /// Show detailed info like file size and timestamps
+    #[arg(
+        short = 'r',
+        long = "regex",
+        help = "Filter entries by matching name with regex"
+    )]
+    pub regex: Option<String>,
+
     #[arg(
         short = 'l',
         long = "long",
@@ -60,7 +55,6 @@ pub struct Args {
     )]
     pub long: bool,
 
-    /// Write output to a file (supports .gz compression)
     #[arg(
         short = 'o',
         long = "output",
@@ -68,7 +62,6 @@ pub struct Args {
     )]
     pub output: Option<PathBuf>,
 
-    /// Pipe output through a pager like 'less'
     #[arg(
         long = "pager",
         default_value_t = false,
@@ -82,8 +75,21 @@ struct Stats {
     files: usize,
 }
 
+struct EntryMeta {
+    entry: fs::DirEntry,
+    type_priority: u8,
+    ext: String,
+    name: String,
+}
+
 pub fn run(args: Args) -> io::Result<()> {
     let extension_set: HashSet<String> = args.extensions.into_iter().collect();
+    let regex_filter = match &args.regex {
+        Some(pattern) => {
+            Some(Regex::new(pattern).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?)
+        }
+        None => None,
+    };
     let mut stats = Stats { dirs: 0, files: 0 };
 
     let use_pager = args.pager;
@@ -102,9 +108,9 @@ pub fn run(args: Args) -> io::Result<()> {
             &args.path,
             "",
             &mut stats,
-            args.max_depth,
             args.all,
             &extension_set,
+            regex_filter.as_ref(),
             args.long,
             &mut write_fn,
         )?;
@@ -147,25 +153,19 @@ fn print_entries_to_buffer(
     root_path: &Path,
     root_prefix: &str,
     stats: &mut Stats,
-    max_depth: Option<usize>,
     show_all: bool,
     extension_filters: &HashSet<String>,
+    regex_filter: Option<&Regex>,
     long_format: bool,
     write_fn: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
     use std::collections::VecDeque;
 
     let mut stack = VecDeque::new();
-    stack.push_back((root_path.to_path_buf(), root_prefix.to_string(), 1));
+    stack.push_back((root_path.to_path_buf(), root_prefix.to_string()));
 
-    while let Some((path, prefix, depth)) = stack.pop_back() {
-        if let Some(max) = max_depth {
-            if depth > max {
-                continue;
-            }
-        }
-
-        let entries = read_filtered_entries(&path, show_all, extension_filters)?;
+    while let Some((path, prefix)) = stack.pop_back() {
+        let entries = read_filtered_entries(&path, show_all, extension_filters, regex_filter)?;
         let total = entries.len();
 
         for (i, entry) in entries.into_iter().enumerate() {
@@ -183,7 +183,7 @@ fn print_entries_to_buffer(
                 } else {
                     format!("{}│   ", prefix)
                 };
-                stack.push_back((child_path, new_prefix, depth + 1));
+                stack.push_back((child_path, new_prefix));
             } else {
                 stats.files += 1;
             }
@@ -202,7 +202,6 @@ fn format_entry_line(path: &Path, name: &str, long_format: bool) -> String {
             name.blue().bold()
         }
     } else if is_hidden {
-        // if a file
         name.dimmed().underline()
     } else {
         match path
@@ -251,46 +250,73 @@ fn read_filtered_entries(
     path: &Path,
     show_all: bool,
     extension_filters: &HashSet<String>,
+    regex_filter: Option<&Regex>,
 ) -> io::Result<Vec<fs::DirEntry>> {
-    let mut entries = vec![];
+    let mut entries_meta = vec![];
+
     for entry_result in fs::read_dir(path)? {
-        if let Ok(entry) = entry_result {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !show_all && name.starts_with('.') {
+        let entry = entry_result?;
+        let file_name_os = entry.file_name();
+
+        // Safely handle non-UTF8 filenames
+        let name = match file_name_os.to_str() {
+            Some(n) => n,
+            None => continue, // skip non-UTF8 entries
+        };
+
+        if !show_all && name.starts_with('.') {
+            continue;
+        }
+
+        if !extension_filters.is_empty() {
+            let ext_match = entry
+                .path()
+                .extension()
+                .and_then(OsStr::to_str)
+                .map(|e| extension_filters.contains(e))
+                .unwrap_or(false);
+            if !ext_match {
                 continue;
             }
-            if !extension_filters.is_empty() {
-                let matches = entry
-                    .path()
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| extension_filters.contains(e))
-                    .unwrap_or(false);
-                if !matches {
-                    continue;
-                }
-            }
-            entries.push(entry);
         }
-    }
-    entries.sort_by_key(|e| {
-        let type_priority = match e.file_type() {
-            Ok(ft) if ft.is_dir() => 0,
-            Ok(ft) if ft.is_file() => 1,
-            Ok(ft) if ft.is_symlink() => 2,
-            Ok(ft) if ft.is_socket() => 3,
-            _ => 4,
-        };
-        let ext = e
+
+        if let Some(re) = regex_filter {
+            if !re.is_match(name) {
+                continue;
+            }
+        }
+
+        let ext = entry
             .path()
             .extension()
-            .and_then(|f| f.to_str())
+            .and_then(OsStr::to_str)
             .unwrap_or("")
             .to_lowercase();
-        let name = e.file_name().to_string_lossy().to_lowercase();
-        (type_priority, ext, name)
+
+        let file_type = entry.file_type()?;
+        let type_priority = if file_type.is_dir() {
+            0
+        } else if file_type.is_file() {
+            1
+        } else if file_type.is_symlink() {
+            2
+        } else {
+            3
+        };
+
+        entries_meta.push(EntryMeta {
+            entry,
+            type_priority,
+            ext,
+            name: name.to_string(),
+        });
+    }
+
+    entries_meta.sort_by(|a, b| {
+        (a.type_priority, &a.ext, &a.name).cmp(&(b.type_priority, &b.ext, &b.name))
     });
-    Ok(entries)
+
+    Ok(entries_meta.into_iter().map(|e| e.entry).collect())
 }
 
 fn format_size(bytes: u64) -> String {
@@ -308,6 +334,8 @@ fn format_time(system_time: SystemTime) -> String {
     let datetime: DateTime<Local> = system_time.into();
     datetime.format("%Y-%m-%d %H:%M:%S").to_string()
 }
+
+// === TESTS ===
 
 #[cfg(test)]
 mod tests {
@@ -327,7 +355,7 @@ mod tests {
     fn test_format_time() {
         let now = SystemTime::now();
         let formatted = format_time(now);
-        assert!(formatted.contains('-')); // e.g. 2024-05-23 18:30:00
+        assert!(formatted.contains('-'));
     }
 
     #[test]
@@ -336,14 +364,14 @@ mod tests {
         File::create(dir.path().join(".hidden"))?;
         File::create(dir.path().join("visible.txt"))?;
 
-        let no_hidden = read_filtered_entries(dir.path(), false, &HashSet::new())?;
+        let no_hidden = read_filtered_entries(dir.path(), false, &HashSet::new(), None)?;
         let names: Vec<_> = no_hidden
             .iter()
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         assert_eq!(names, vec!["visible.txt"]);
 
-        let all_files = read_filtered_entries(dir.path(), true, &HashSet::new())?;
+        let all_files = read_filtered_entries(dir.path(), true, &HashSet::new(), None)?;
         let names: Vec<_> = all_files
             .iter()
             .map(|e| e.file_name().to_string_lossy().to_string())
@@ -364,7 +392,7 @@ mod tests {
         filters.insert("rs".to_string());
         filters.insert("md".to_string());
 
-        let entries = read_filtered_entries(dir.path(), true, &filters)?;
+        let entries = read_filtered_entries(dir.path(), true, &filters, None)?;
         let names: Vec<_> = entries
             .iter()
             .map(|e| e.file_name().to_string_lossy().to_string())
@@ -373,6 +401,26 @@ mod tests {
         assert!(names.contains(&"main.rs".to_string()));
         assert!(names.contains(&"README.md".to_string()));
         assert!(!names.contains(&"LICENSE".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_regex_filtering() -> io::Result<()> {
+        let dir = tempdir()?;
+        File::create(dir.path().join("data1.csv"))?;
+        File::create(dir.path().join("data2.csv"))?;
+        File::create(dir.path().join("notes.txt"))?;
+
+        let regex = Regex::new(r"^data.*").unwrap();
+        let entries = read_filtered_entries(dir.path(), true, &HashSet::new(), Some(&regex))?;
+        let names: Vec<_> = entries
+            .iter()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+
+        assert!(names.contains(&"data1.csv".to_string()));
+        assert!(names.contains(&"data2.csv".to_string()));
+        assert!(!names.contains(&"notes.txt".to_string()));
         Ok(())
     }
 

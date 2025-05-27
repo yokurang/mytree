@@ -8,24 +8,30 @@ This document contains the help content for the `rtree` command-line program.
 
 ## `rtree`
 
-Rtree lets you view directory trees with optional depth control, hidden files, extension filtering, and long-format metadata.
+Rtree lets you view directory trees with optional hidden files, extension filtering, regex matching, and long-format metadata.
 
 **Usage:** `rtree [OPTIONS] [PATH]`
 
 ###### **Arguments:**
 
-* `<PATH>`
+* `<PATH>` — Root directory to start traversal
 
   Default value: `.`
 
 ###### **Options:**
 
-* `-d`, `--depth <MAX_DEPTH>`
-* `-a`, `--all`
-* `-e`, `--extension <EXTENSIONS>`
-* `-l`, `--long`
-* `-o`, `--output <OUTPUT>`
-* `--pager`
+* `-a`, `--all` — Include hidden files and directories
+
+  Default value: `false`
+* `-e`, `--extension <EXTENSIONS>` — Filter by file extensions (e.g. -e rs -e toml)
+* `-r`, `--regex <REGEX>` — Filter entries by matching name with regex
+* `-l`, `--long` — Enable long format output with size and timestamps
+
+  Default value: `false`
+* `-o`, `--output <OUTPUT>` — Write output to a file. Supports .gz compression
+* `--pager` — Send output to pager (e.g. less)
+
+  Default value: `false`
 
 
 
