@@ -1,7 +1,7 @@
 [package]
 name = "rtree"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 authors = ["Alan Matthew"]
 description = "A fast CLI tool to visualize directory structures with filtering and formatting"
 readme = "README.md"
@@ -17,7 +17,7 @@ default-run = "rtree"
 clap = { version = "4.5.38", features = ["derive"] }
 colored = "2"
 tempfile = "3"
-chrono = "*"
+chrono = "0.4"
 flate2 = { version = "1.1.1", features = ["rust_backend"] }
 clap-markdown = "0.1.5"
 regex = "1.11.1"
