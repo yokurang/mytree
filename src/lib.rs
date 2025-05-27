@@ -18,8 +18,8 @@ use std::time::SystemTime;
 #[command(
     author,
     version,
-    about = "Rtree is a terminal tool to visualize your folder structure.",
-    long_about = "Rtree lets you view directory trees with optional hidden files, extension filtering, regex matching, and long-format metadata."
+    about = "Mytree is a terminal tool to visualize your folder structure.",
+    long_about = "Mytree lets you view directory trees with optional hidden files, extension filtering, regex matching, and long-format metadata."
 )]
 pub struct Args {
     #[arg(default_value = ".", help = "Root directory to start traversal")]

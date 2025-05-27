@@ -1,16 +1,16 @@
-# Command-Line Help for `rtree`
+# Command-Line Help for `mytree`
 
-This document contains the help content for the `rtree` command-line program.
+This document contains the help content for the `mytree` command-line program.
 
 **Command Overview:**
 
-* [`rtree`↴](#rtree)
+* [`mytree`↴](#mytree)
 
-## `rtree`
+## `mytree`
 
-Rtree lets you view directory trees with optional hidden files, extension filtering, regex matching, and long-format metadata.
+Mytree lets you view directory trees with optional hidden files, extension filtering, regex matching, and long-format metadata.
 
-**Usage:** `rtree [OPTIONS] [PATH]`
+**Usage:** `mytree [OPTIONS] [PATH]`
 
 ###### **Arguments:**
 

@@ -1,5 +1,5 @@
 use clap_markdown::help_markdown;
-use rtree::Args;
+use mytree::Args;
 
 fn main() {
     let markdown = help_markdown::<Args>();

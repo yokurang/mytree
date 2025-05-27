@@ -333,6 +333,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mytree"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "clap-markdown",
+ "colored",
+ "flate2",
+ "regex",
+ "tempfile",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -399,19 +412,6 @@ name = "regex-syntax"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
-
-[[package]]
-name = "rtree"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "clap-markdown",
- "colored",
- "flate2",
- "regex",
- "tempfile",
-]
 
 [[package]]
 name = "rustix"
