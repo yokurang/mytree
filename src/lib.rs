@@ -2,14 +2,14 @@
 use chrono::{DateTime, Local};
 use clap::Parser;
 use colored::*;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use regex::Regex;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::io::Write;
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
@@ -104,16 +104,14 @@ pub fn run(args: Args) -> io::Result<()> {
             output_buffer.push(b'\n');
         };
 
-        print_entries_to_buffer(
-            &args.path,
-            "",
-            &mut stats,
-            args.all,
-            &extension_set,
-            regex_filter.as_ref(),
-            args.long,
-            &mut write_fn,
-        )?;
+        let opts = PrintOptions {
+            show_all: args.all,
+            extension_filters: &extension_set,
+            regex_filter: regex_filter.as_ref(),
+            long_format: args.long,
+        };
+
+        print_entries_to_buffer(&args.path, "", &mut stats, &opts, &mut write_fn)?;
 
         let summary = format!("\n{} directories, {} files", stats.dirs, stats.files);
         output_buffer.extend_from_slice(summary.as_bytes());
@@ -149,14 +147,18 @@ pub fn run(args: Args) -> io::Result<()> {
     Ok(())
 }
 
+struct PrintOptions<'a> {
+    show_all: bool,
+    extension_filters: &'a HashSet<String>,
+    regex_filter: Option<&'a Regex>,
+    long_format: bool,
+}
+
 fn print_entries_to_buffer(
     root_path: &Path,
     root_prefix: &str,
     stats: &mut Stats,
-    show_all: bool,
-    extension_filters: &HashSet<String>,
-    regex_filter: Option<&Regex>,
-    long_format: bool,
+    opts: &PrintOptions,
     write_fn: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
     use std::collections::VecDeque;
@@ -165,7 +167,12 @@ fn print_entries_to_buffer(
     stack.push_back((root_path.to_path_buf(), root_prefix.to_string()));
 
     while let Some((path, prefix)) = stack.pop_back() {
-        let entries = read_filtered_entries(&path, show_all, extension_filters, regex_filter)?;
+        let entries = read_filtered_entries(
+            &path,
+            opts.show_all,
+            opts.extension_filters,
+            opts.regex_filter,
+        )?;
         let total = entries.len();
 
         for (i, entry) in entries.into_iter().enumerate() {
@@ -173,7 +180,7 @@ fn print_entries_to_buffer(
             let name = entry.file_name().to_string_lossy().to_string();
             let is_last = i == total - 1;
             let connector = if is_last { "`--" } else { "|--" };
-            let line = format_entry_line(&child_path, &name, long_format);
+            let line = format_entry_line(&child_path, &name, opts.long_format);
             write_fn(&format!("{}{}{}", prefix, connector, line));
 
             if child_path.is_dir() {
