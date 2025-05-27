@@ -14,12 +14,13 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # needed for commits
+          fetch-depth: 0  # needed for auto-commit
 
       - name: Set up Rust
-        uses: actions/setup-rust@v1
+        uses: actions-rs/toolchain@v1
         with:
-          rust-version: stable
+          toolchain: stable
+          override: true
 
       - name: Cache cargo registry
         uses: actions/cache@v3
