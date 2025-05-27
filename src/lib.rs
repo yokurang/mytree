@@ -156,44 +156,37 @@ struct PrintOptions<'a> {
 
 fn print_entries_to_buffer(
     root_path: &Path,
-    root_prefix: &str,
+    prefix: &str,
     stats: &mut Stats,
     opts: &PrintOptions,
     write_fn: &mut dyn FnMut(&str),
 ) -> io::Result<()> {
-    use std::collections::VecDeque;
+    let entries = read_filtered_entries(
+        root_path,
+        opts.show_all,
+        opts.extension_filters,
+        opts.regex_filter,
+    )?;
 
-    let mut stack = VecDeque::new();
-    stack.push_back((root_path.to_path_buf(), root_prefix.to_string()));
+    let total = entries.len();
+    for (i, entry) in entries.into_iter().enumerate() {
+        let child_path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_last = i == total - 1;
+        let connector = if is_last { "└── " } else { "├── " };
+        let line = format_entry_line(&child_path, &name, opts.long_format);
+        write_fn(&format!("{}{}{}", prefix, connector, line));
 
-    while let Some((path, prefix)) = stack.pop_back() {
-        let entries = read_filtered_entries(
-            &path,
-            opts.show_all,
-            opts.extension_filters,
-            opts.regex_filter,
-        )?;
-        let total = entries.len();
-
-        for (i, entry) in entries.into_iter().enumerate() {
-            let child_path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            let is_last = i == total - 1;
-            let connector = if is_last { "`--" } else { "|--" };
-            let line = format_entry_line(&child_path, &name, opts.long_format);
-            write_fn(&format!("{}{}{}", prefix, connector, line));
-
-            if child_path.is_dir() {
-                stats.dirs += 1;
-                let new_prefix = if is_last {
-                    format!("{}    ", prefix)
-                } else {
-                    format!("{}│   ", prefix)
-                };
-                stack.push_back((child_path, new_prefix));
+        if child_path.is_dir() {
+            stats.dirs += 1;
+            let new_prefix = if is_last {
+                format!("{}    ", prefix)
             } else {
-                stats.files += 1;
-            }
+                format!("{}│   ", prefix)
+            };
+            print_entries_to_buffer(&child_path, &new_prefix, stats, opts, write_fn)?;
+        } else {
+            stats.files += 1;
         }
     }
 
@@ -320,7 +313,9 @@ fn read_filtered_entries(
     }
 
     entries_meta.sort_by(|a, b| {
-        (a.type_priority, &a.ext, &a.name).cmp(&(b.type_priority, &b.ext, &b.name))
+        a.type_priority
+            .cmp(&b.type_priority)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
     Ok(entries_meta.into_iter().map(|e| e.entry).collect())
