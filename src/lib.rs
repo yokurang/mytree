@@ -75,6 +75,7 @@ struct Stats {
     files: usize,
 }
 
+/// Internal metadata used only for sorting before constructing a `TreeNode`.
 struct EntryMeta {
     entry: fs::DirEntry,
     type_priority: u8,
@@ -105,13 +106,21 @@ pub fn run(args: Args) -> io::Result<()> {
         }
         None => None,
     };
+
+    let opts = PrintOptions {
+        show_all: args.all,
+        extension_filters: &extension_set,
+        regex_filter: regex_filter.as_ref(),
+        long_format: args.long,
+    };
+
+    let tree = build_tree(&args.path, &opts)?;
+
     let mut stats = Stats { dirs: 0, files: 0 };
 
-    let use_pager = args.pager;
-    let mut output_buffer = Vec::new();
-
-    let root_display = format!("{}\n", args.path.display());
-    output_buffer.extend_from_slice(root_display.as_bytes());
+    let mut output_buffer = Vec::<u8>::new();
+    // Print the root explicitly (to match `tree(1)` behaviour)
+    writeln!(&mut output_buffer, "{}", args.path.display())?;
 
     {
         let mut write_fn = |line: &str| {
@@ -119,42 +128,30 @@ pub fn run(args: Args) -> io::Result<()> {
             output_buffer.push(b'\n');
         };
 
-        let opts = PrintOptions {
-            show_all: args.all,
-            extension_filters: &extension_set,
-            regex_filter: regex_filter.as_ref(),
-            long_format: args.long,
-        };
+        for (idx, child) in tree.children.iter().enumerate() {
+            let is_last = idx == tree.children.len() - 1;
+            let connector = if is_last { "└── " } else { "├── " };
+            print_tree(
+                child,
+                connector,
+                if is_last { "    " } else { "│   " },
+                &mut stats,
+                &opts,
+                &mut write_fn,
+            );
+        }
 
-        print_entries_to_buffer(&args.path, "", &mut stats, &opts, &mut write_fn)?;
-
-        let summary = format!("\n{} directories, {} files", stats.dirs, stats.files);
-        output_buffer.extend_from_slice(summary.as_bytes());
-        output_buffer.push(b'\n');
+        writeln!(
+            output_buffer,
+            "\n{} directories, {} files",
+            stats.dirs, stats.files
+        )?;
     }
 
     if let Some(path) = args.output {
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if ext == "gz" {
-                let file = fs::File::create(&path)?;
-                let mut encoder = GzEncoder::new(file, Compression::default());
-                encoder.write_all(&output_buffer)?;
-                encoder.finish()?;
-            } else {
-                fs::write(path, output_buffer)?;
-            }
-        } else {
-            fs::write(path, output_buffer)?;
-        }
-    } else if use_pager {
-        let mut pager = Command::new("less")
-            .arg("-R")
-            .stdin(Stdio::piped())
-            .spawn()?;
-        if let Some(stdin) = pager.stdin.as_mut() {
-            stdin.write_all(&output_buffer)?;
-        }
-        pager.wait()?;
+        write_to_file(&output_buffer, path)?;
+    } else if args.pager {
+        pipe_to_pager(&output_buffer)?;
     } else {
         io::stdout().write_all(&output_buffer)?;
     }
@@ -162,13 +159,9 @@ pub fn run(args: Args) -> io::Result<()> {
     Ok(())
 }
 
-fn print_entries_to_buffer(
-    root_path: &Path,
-    prefix: &str,
-    stats: &mut Stats,
-    opts: &PrintOptions,
-    write_fn: &mut dyn FnMut(&str),
-) -> io::Result<()> {
+/// Recursively builds a `TreeNode` representing the directory tree rooted at
+/// `root_path`, applying the same filters used for display.
+fn build_tree(root_path: &Path, opts: &PrintOptions) -> io::Result<TreeNode> {
     let entries = read_filtered_entries(
         root_path,
         opts.show_all,
@@ -176,33 +169,104 @@ fn print_entries_to_buffer(
         opts.regex_filter,
     )?;
 
-    let total = entries.len();
-    for (i, entry) in entries.into_iter().enumerate() {
+    let mut children = Vec::with_capacity(entries.len());
+    for entry in entries {
         let child_path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let is_last = i == total - 1;
-        let connector = if is_last { "└── " } else { "├── " };
-        let line = format_entry_line(&child_path, &name, opts.long_format);
-        write_fn(&format!("{}{}{}", prefix, connector, line));
+        let child_name = entry.file_name().to_string_lossy().to_string();
+        let is_dir = child_path.is_dir();
 
-        if child_path.is_dir() {
-            stats.dirs += 1;
-            let new_prefix = if is_last {
-                format!("{}    ", prefix)
-            } else {
-                format!("{}│   ", prefix)
-            };
-            print_entries_to_buffer(&child_path, &new_prefix, stats, opts, write_fn)?;
+        let grandchildren = if is_dir {
+            build_tree(&child_path, opts)?.children
         } else {
-            stats.files += 1;
-        }
+            Vec::new()
+        };
+
+        children.push(TreeNode {
+            path: child_path,
+            name: child_name,
+            is_dir,
+            children: grandchildren,
+        });
     }
 
+    Ok(TreeNode {
+        path: root_path.to_path_buf(),
+        name: root_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| root_path.display().to_string()),
+        is_dir: true,
+        children,
+    })
+}
+
+/// Pretty‑prints the tree starting at `node`, using `prefix` + `connector` to
+/// draw guide lines (`├──`, `└──`, etc.).
+fn print_tree(
+    node: &TreeNode,
+    connector: &str,
+    prefix_continuation: &str,
+    stats: &mut Stats,
+    opts: &PrintOptions,
+    write_fn: &mut dyn FnMut(&str),
+) {
+    // Render this node itself.
+    let line = format_entry_line(&node.path, &node.name, opts.long_format);
+    write_fn(&format!("{}{}", connector, line));
+
+    if node.is_dir {
+        stats.dirs += 1;
+    } else {
+        stats.files += 1;
+    }
+
+    for (idx, child) in node.children.iter().enumerate() {
+        let is_last = idx == node.children.len() - 1;
+        let child_connector = if is_last { "└── " } else { "├── " };
+        let new_prefix = if is_last {
+            format!("{}{}", prefix_continuation, "    ")
+        } else {
+            format!("{}{}", prefix_continuation, "│   ")
+        };
+
+        print_tree(
+            child,
+            &format!("{}{}", prefix_continuation, child_connector),
+            &new_prefix,
+            stats,
+            opts,
+            write_fn,
+        );
+    }
+}
+
+fn write_to_file(buffer: &[u8], path: PathBuf) -> io::Result<()> {
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        if ext == "gz" {
+            let file = fs::File::create(&path)?;
+            let mut encoder = GzEncoder::new(file, Compression::default());
+            encoder.write_all(buffer)?;
+            encoder.finish()?;
+            return Ok(());
+        }
+    }
+    fs::write(path, buffer)
+}
+
+fn pipe_to_pager(buffer: &[u8]) -> io::Result<()> {
+    let mut pager = Command::new("less")
+        .arg("-R")
+        .stdin(Stdio::piped())
+        .spawn()?;
+    if let Some(stdin) = &mut pager.stdin {
+        stdin.write_all(buffer)?;
+    }
+    pager.wait()?;
     Ok(())
 }
 
 fn format_entry_line(path: &Path, name: &str, long_format: bool) -> String {
-    let is_hidden = name.starts_with('.');
+    let is_hidden = name.starts_with('.') && name != "." && name != "..";
     let styled_name = if path.is_dir() {
         if is_hidden {
             name.blue().bold().dimmed().underline()
@@ -237,12 +301,12 @@ fn format_entry_line(path: &Path, name: &str, long_format: bool) -> String {
                     .modified()
                     .ok()
                     .map(format_time)
-                    .unwrap_or("-".to_string());
+                    .unwrap_or_else(|| "-".to_string());
                 let created = metadata
                     .created()
                     .ok()
                     .map(format_time)
-                    .unwrap_or("-".to_string());
+                    .unwrap_or_else(|| "-".to_string());
                 format!(
                     "{}\n      {:<10} {:<12} {:<10} {:<20} {:<10} {:<20}",
                     styled_name, "Size:", size, "Modified:", modified, "Created:", created
@@ -253,6 +317,22 @@ fn format_entry_line(path: &Path, name: &str, long_format: bool) -> String {
     } else {
         styled_name.to_string()
     }
+}
+
+fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut i = 0;
+    while size >= 1024.0 && i < UNITS.len() - 1 {
+        size /= 1024.0;
+        i += 1;
+    }
+    format!("{:.1} {:<2}", size, UNITS[i])
+}
+
+fn format_time(system_time: SystemTime) -> String {
+    let datetime: DateTime<Local> = system_time.into();
+    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 fn read_filtered_entries(
@@ -270,7 +350,7 @@ fn read_filtered_entries(
 
         let name = match file_name_os.to_str() {
             Some(n) => n,
-            None => continue, // skip non-UTF8 entries
+            None => continue, // skip non‑UTF8 entries
         };
 
         if !show_all && name.starts_with('.') {
@@ -294,7 +374,6 @@ fn read_filtered_entries(
             3
         };
 
-        // Always include directories so we can recurse into them
         if file_type.is_dir()
             || ((extension_filters.is_empty() || extension_filters.contains(&ext))
                 && (regex_filter.is_none() || regex_filter.unwrap().is_match(name)))
@@ -318,23 +397,7 @@ fn read_filtered_entries(
     Ok(entries_meta.into_iter().map(|e| e.entry).collect())
 }
 
-fn format_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut size = bytes as f64;
-    let mut i = 0;
-    while size >= 1024.0 && i < UNITS.len() - 1 {
-        size /= 1024.0;
-        i += 1;
-    }
-    format!("{:.1} {:<2}", size, UNITS[i])
-}
-
-fn format_time(system_time: SystemTime) -> String {
-    let datetime: DateTime<Local> = system_time.into();
-    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
-}
-
-// === TESTS ===
+// Tests
 
 #[cfg(test)]
 mod tests {
