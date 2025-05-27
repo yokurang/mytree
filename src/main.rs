@@ -1,5 +1,5 @@
 use clap::Parser;
-use rtree::{Args, run};
+use rtree::{run, Args};
 
 fn main() -> std::io::Result<()> {
     let args = Args::parse();

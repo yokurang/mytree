@@ -2,8 +2,8 @@
 use chrono::{DateTime, Local};
 use clap::Parser;
 use colored::*;
-use flate2::Compression;
 use flate2::write::GzEncoder;
+use flate2::Compression;
 use regex::Regex;
 use std::collections::HashSet;
 use std::ffi::OsStr;
