@@ -82,6 +82,21 @@ struct EntryMeta {
     name: String,
 }
 
+struct PrintOptions<'a> {
+    show_all: bool,
+    extension_filters: &'a HashSet<String>,
+    regex_filter: Option<&'a Regex>,
+    long_format: bool,
+}
+
+#[derive(Debug)]
+struct TreeNode {
+    path: PathBuf,
+    name: String,
+    is_dir: bool,
+    children: Vec<TreeNode>,
+}
+
 pub fn run(args: Args) -> io::Result<()> {
     let extension_set: HashSet<String> = args.extensions.into_iter().collect();
     let regex_filter = match &args.regex {
@@ -145,13 +160,6 @@ pub fn run(args: Args) -> io::Result<()> {
     }
 
     Ok(())
-}
-
-struct PrintOptions<'a> {
-    show_all: bool,
-    extension_filters: &'a HashSet<String>,
-    regex_filter: Option<&'a Regex>,
-    long_format: bool,
 }
 
 fn print_entries_to_buffer(
@@ -221,7 +229,7 @@ fn format_entry_line(path: &Path, name: &str, long_format: bool) -> String {
         }
     };
 
-    let info = if long_format {
+    if long_format {
         match fs::metadata(path) {
             Ok(metadata) => {
                 let size = format_size(metadata.len());
@@ -235,15 +243,16 @@ fn format_entry_line(path: &Path, name: &str, long_format: bool) -> String {
                     .ok()
                     .map(format_time)
                     .unwrap_or("-".to_string());
-                format!(" {:>10}  {}  {}", size, modified, created)
+                format!(
+                    "{}\n      {:<10} {:<12} {:<10} {:<20} {:<10} {:<20}",
+                    styled_name, "Size:", size, "Modified:", modified, "Created:", created
+                )
             }
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{} (Error reading metadata: {})", styled_name, e),
         }
     } else {
-        String::new()
-    };
-
-    format!("{}{}", styled_name, info)
+        styled_name.to_string()
+    }
 }
 
 fn read_filtered_entries(
@@ -256,9 +265,9 @@ fn read_filtered_entries(
 
     for entry_result in fs::read_dir(path)? {
         let entry = entry_result?;
+        let file_type = entry.file_type()?;
         let file_name_os = entry.file_name();
 
-        // Safely handle non-UTF8 filenames
         let name = match file_name_os.to_str() {
             Some(n) => n,
             None => continue, // skip non-UTF8 entries
@@ -268,24 +277,6 @@ fn read_filtered_entries(
             continue;
         }
 
-        if !extension_filters.is_empty() {
-            let ext_match = entry
-                .path()
-                .extension()
-                .and_then(OsStr::to_str)
-                .map(|e| extension_filters.contains(e))
-                .unwrap_or(false);
-            if !ext_match {
-                continue;
-            }
-        }
-
-        if let Some(re) = regex_filter {
-            if !re.is_match(name) {
-                continue;
-            }
-        }
-
         let ext = entry
             .path()
             .extension()
@@ -293,7 +284,6 @@ fn read_filtered_entries(
             .unwrap_or("")
             .to_lowercase();
 
-        let file_type = entry.file_type()?;
         let type_priority = if file_type.is_dir() {
             0
         } else if file_type.is_file() {
@@ -304,12 +294,18 @@ fn read_filtered_entries(
             3
         };
 
-        entries_meta.push(EntryMeta {
-            entry,
-            type_priority,
-            ext,
-            name: name.to_string(),
-        });
+        // Always include directories so we can recurse into them
+        if file_type.is_dir()
+            || ((extension_filters.is_empty() || extension_filters.contains(&ext))
+                && (regex_filter.is_none() || regex_filter.unwrap().is_match(name)))
+        {
+            entries_meta.push(EntryMeta {
+                entry,
+                type_priority,
+                ext,
+                name: name.to_string(),
+            });
+        }
     }
 
     entries_meta.sort_by(|a, b| {
