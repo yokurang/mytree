@@ -1,4 +1,18 @@
-
 # mytree
 
-`mytree` is a terminal-based Rust application that displays a visual tree of directory contents. It supports filtering by file extension and regular expressions, shows or hides hidden files, displays optional file metadata like size and timestamps, and can write output to a file or pipe it through a pager.
+[`mytree`](https://crates.io/crates/mytree) is a small Rust CLI that prints a directory tree to the terminal.  
+The output can be filtered (by extension or regex), include hidden items, show long-format metadata, be streamed through a pager, written to a file (optionally **gzip**-compressed), or emitted as machine-readable JSON.
+
+---
+
+## Installation
+
+```bash
+# needs Rust ≥1.70
+cargo install mytree  # grabs the latest release from crates.io
+```
+
+> The binary will be installed to `$HOME/.cargo/bin`; make sure this directory is in your `PATH`.
+> You can also find `mytree` on [crates.io](https://crates.io/crates/mytree).
+
+---
