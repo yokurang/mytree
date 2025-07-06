@@ -496,7 +496,9 @@ fn print_ascii_tree(root: &TreeNode, opts: &PrintOptions, root_path: &Path) {
 
     println!(
         "\n{} directories, {} files, {} bytes total",
-        stats.dirs, stats.files, format_size(stats.size)
+        stats.dirs,
+        stats.files,
+        format_size(stats.size)
     );
 }
 
