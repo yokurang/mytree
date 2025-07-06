@@ -4,13 +4,13 @@ use colored::*;
 use regex::Regex;
 use serde::Serialize;
 use std::collections::HashSet;
-use std::{fmt, fs};
 use std::error::Error;
+use std::fmt::Debug;
 use std::io;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use std::fmt::{Debug};
-use std::io::ErrorKind;
+use std::{fmt, fs};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -34,9 +34,9 @@ pub struct Args {
     pub path: PathBuf,
 
     #[arg(
-    short = 's',
-    long = "sort",
-    help = "Supply the argument with 'fs' to sort by file size, 'ts' to sort by last updated timestamp, or nothing to sort alphabetically (default)",
+        short = 's',
+        long = "sort",
+        help = "Supply the argument with 'fs' to sort by file size, 'ts' to sort by last updated timestamp, or nothing to sort alphabetically (default)"
     )]
     pub sort_by: Option<String>,
 
@@ -123,12 +123,12 @@ pub enum ArgParseErrorType {
 impl fmt::Display for ArgParseErrorType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ArgParseErrorType::SortFlag(flag) =>
-                write!(f, "invalid sort flag \"{flag}\" (expected \"fs\" or \"ts\")"),
-            ArgParseErrorType::BadExtension(ext) =>
-                write!(f, "invalid extension \"{ext}\""),
-            ArgParseErrorType::BadRegex(msg) =>
-                write!(f, "invalid regex -> {msg}"),
+            ArgParseErrorType::SortFlag(flag) => write!(
+                f,
+                "invalid sort flag \"{flag}\" (expected \"fs\" or \"ts\")"
+            ),
+            ArgParseErrorType::BadExtension(ext) => write!(f, "invalid extension \"{ext}\""),
+            ArgParseErrorType::BadRegex(msg) => write!(f, "invalid regex -> {msg}"),
         }
     }
 }
@@ -186,8 +186,8 @@ pub enum ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::Args(e)  => Debug::fmt(&e, f),
-            ParseError::Tree(e)  => Debug::fmt(&e, f),
+            ParseError::Args(e) => Debug::fmt(&e, f),
+            ParseError::Tree(e) => Debug::fmt(&e, f),
         }
     }
 }
@@ -201,8 +201,16 @@ impl Error for ParseError {
     }
 }
 
-impl From<ArgParseError>  for ParseError { fn from(e: ArgParseError)  -> Self { Self::Args(e) } }
-impl From<TreeParseError> for ParseError { fn from(e: TreeParseError) -> Self { Self::Tree(e) } }
+impl From<ArgParseError> for ParseError {
+    fn from(e: ArgParseError) -> Self {
+        Self::Args(e)
+    }
+}
+impl From<TreeParseError> for ParseError {
+    fn from(e: TreeParseError) -> Self {
+        Self::Tree(e)
+    }
+}
 
 impl From<ParseError> for io::Error {
     fn from(e: ParseError) -> io::Error {
@@ -224,7 +232,7 @@ fn create_print_options_from_args(args: Args) -> Result<PrintOptions, ParseError
     let sort_by = match args.sort_by.as_deref() {
         Some("fs") => SortBy::FileSize,
         Some("ts") => SortBy::LastUpdatedTimestamp,
-        Some(bad)  => {
+        Some(bad) => {
             return Err(ParseError::Args(ArgParseError {
                 details: ArgParseErrorType::SortFlag(bad.into()),
             }));
@@ -253,7 +261,9 @@ fn create_print_options_from_args(args: Args) -> Result<PrintOptions, ParseError
             Ok(re) => Some(re),
             Err(e) => {
                 return Err(ParseError::Args(ArgParseError {
-                    details: ArgParseErrorType::BadRegex(format!("invalid regex \"{pattern}\": {e}")),
+                    details: ArgParseErrorType::BadRegex(format!(
+                        "invalid regex \"{pattern}\": {e}"
+                    )),
                 }));
             }
         }
@@ -280,10 +290,7 @@ fn create_ordered_row_level_entries(
 ) -> Result<Vec<EntryMeta>, ParseError> {
     let iter = fs::read_dir(path).map_err(|e| {
         ParseError::Tree(TreeParseError {
-            details: TreeParseType::Io(format!(
-                "error reading directory {}: {e}",
-                path.display()
-            )),
+            details: TreeParseType::Io(format!("error reading directory {}: {e}", path.display())),
         })
     })?;
 
@@ -309,7 +316,7 @@ fn create_ordered_row_level_entries(
         })?;
 
         let name = entry.file_name().to_string_lossy().to_string();
-        let ext  = entry
+        let ext = entry
             .path()
             .extension()
             .and_then(|s| s.to_str())
@@ -342,7 +349,7 @@ fn create_ordered_row_level_entries(
                 )),
             })
         })?;
-        
+
         meta_entries.push(EntryMeta {
             name,
             path: entry.path(),
@@ -354,7 +361,6 @@ fn create_ordered_row_level_entries(
 
     Ok(sort_meta_entries(meta_entries, &opts.sort_by))
 }
-
 
 fn sort_meta_entries(mut meta_entries: Vec<EntryMeta>, sort_criteria: &SortBy) -> Vec<EntryMeta> {
     match sort_criteria {
@@ -374,10 +380,7 @@ fn sort_meta_entries(mut meta_entries: Vec<EntryMeta>, sort_criteria: &SortBy) -
 /*
 Return a vector of ordered row-level entries at a point in the directory
 */
-fn build_directory_tree(
-    root_path: &Path,
-    opts: &PrintOptions,
-) -> Result<TreeNode, ParseError> {
+fn build_directory_tree(root_path: &Path, opts: &PrintOptions) -> Result<TreeNode, ParseError> {
     let md = fs::metadata(root_path).map_err(|e| {
         ParseError::Tree(TreeParseError {
             details: TreeParseType::Io(format!(
@@ -387,8 +390,8 @@ fn build_directory_tree(
         })
     })?;
 
-    let entries   = create_ordered_row_level_entries(root_path, opts)?;
-    let mut kids  = Vec::with_capacity(entries.len());
+    let entries = create_ordered_row_level_entries(root_path, opts)?;
+    let mut kids = Vec::with_capacity(entries.len());
     for entry in entries {
         kids.push(build_tree_node_from_entry_meta(entry, opts)?);
     }
@@ -408,10 +411,10 @@ fn build_directory_tree(
 
 fn build_tree_node_from_entry_meta(
     entry: EntryMeta,
-    opts:   &PrintOptions,
+    opts: &PrintOptions,
 ) -> Result<TreeNode, ParseError> {
     let children = if entry.is_dir {
-        let subs      = create_ordered_row_level_entries(&entry.path, opts)?;
+        let subs = create_ordered_row_level_entries(&entry.path, opts)?;
         let mut nodes = Vec::with_capacity(subs.len());
         for sub in subs {
             nodes.push(build_tree_node_from_entry_meta(sub, opts)?);
@@ -442,22 +445,21 @@ fn print_tree(
     opts: &PrintOptions,
     write_fn: &mut dyn FnMut(&str),
 ) {
-
     let line = format_entry_line(&node.path, &node.name, opts.long_format);
     write_fn(&format!("{}{}{}", prefix_continuation, connector, line));
-    
+
     if node.is_dir {
         stats.dirs += 1;
     } else {
         stats.files += 1;
-        stats.size  += node.size;
+        stats.size += node.size;
     }
 
     if let Some(children) = node.children.as_ref() {
         let last_pos = children.len().saturating_sub(1);
 
         for (idx, child) in children.iter().enumerate() {
-            let is_last    = idx == last_pos;
+            let is_last = idx == last_pos;
             let child_conn = if is_last { "└── " } else { "├── " };
             let new_prefix = if is_last {
                 format!("{}    ", prefix_continuation)
@@ -465,21 +467,18 @@ fn print_tree(
                 format!("{}│   ", prefix_continuation)
             };
 
-            print_tree(
-                child,
-                child_conn,
-                &new_prefix,
-                stats,
-                opts,
-                write_fn,
-            );
+            print_tree(child, child_conn, &new_prefix, stats, opts, write_fn);
         }
     }
 }
 
 fn print_ascii_tree(root: &TreeNode, opts: &PrintOptions, root_path: &Path) {
-    let mut stats = Stats { dirs: 0, files: 0, size: 0 };
-    
+    let mut stats = Stats {
+        dirs: 0,
+        files: 0,
+        size: 0,
+    };
+
     println!("{}", root_path.display());
 
     let mut push_line = |line: &str| println!("{line}");
@@ -487,9 +486,9 @@ fn print_ascii_tree(root: &TreeNode, opts: &PrintOptions, root_path: &Path) {
     if let Some(children) = root.children.as_ref() {
         let last = children.len().saturating_sub(1);
         for (idx, child) in children.iter().enumerate() {
-            let is_last   = idx == last;
+            let is_last = idx == last;
             let connector = if is_last { "└── " } else { "├── " };
-            let prefix    = if is_last { "    " } else { "│   " };
+            let prefix = if is_last { "    " } else { "│   " };
 
             print_tree(child, connector, prefix, &mut stats, opts, &mut push_line);
         }
@@ -571,10 +570,7 @@ fn format_time(system_time: SystemTime) -> String {
     datetime.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-fn write_tree_json<P>(
-    nodes: &[TreeNode],
-    dest: Option<P>,
-) -> Result<(), ParseError>
+fn write_tree_json<P>(nodes: &[TreeNode], dest: Option<P>) -> Result<(), ParseError>
 where
     P: AsRef<Path>,
 {
@@ -583,11 +579,11 @@ where
             details: TreeParseType::InvalidInput(format!("serialising JSON: {e}")),
         })
     })?;
-    
+
     let path: PathBuf = dest
         .map(|p| p.as_ref().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("file.json"));
-    
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             ParseError::Tree(TreeParseError {
@@ -595,7 +591,7 @@ where
             })
         })?;
     }
-    
+
     fs::write(&path, json_bytes).map_err(|e| {
         ParseError::Tree(TreeParseError {
             details: TreeParseType::Io(format!("writing {:?}: {e}", path)),
@@ -604,7 +600,6 @@ where
 }
 
 fn emit_json(tree: &TreeNode, dest_raw: &str) -> Result<(), ParseError> {
-    
     let dest: Option<&Path> = if dest_raw.trim().is_empty() {
         None
     } else {
@@ -615,21 +610,22 @@ fn emit_json(tree: &TreeNode, dest_raw: &str) -> Result<(), ParseError> {
 
     println!(
         "Wrote directory tree to {}",
-        dest.map(|p| p.display().to_string()).unwrap_or_else(|| "file.json".into())
+        dest.map(|p| p.display().to_string())
+            .unwrap_or_else(|| "file.json".into())
     );
 
     Ok(())
 }
 pub fn run(args: Args) -> io::Result<()> {
     let path = &args.path.clone();
-    let opts  = create_print_options_from_args(args)?;
-    let tree  = build_directory_tree(path, &opts)?;
-    
+    let opts = create_print_options_from_args(args)?;
+    let tree = build_directory_tree(path, &opts)?;
+
     if let Some(ref raw_dest) = opts.write_json {
         emit_json(&tree, raw_dest)?;
         return Ok(());
     }
-    
+
     print_ascii_tree(&tree, &opts, path);
     Ok(())
 }
