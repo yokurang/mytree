@@ -214,7 +214,7 @@ impl From<TreeParseError> for ParseError {
 
 impl From<ParseError> for io::Error {
     fn from(e: ParseError) -> io::Error {
-        io::Error::new(ErrorKind::Other, e)
+        io::Error::other(e)
     }
 }
 
@@ -329,14 +329,14 @@ fn create_ordered_row_level_entries(
         if opts
             .extension_filters
             .as_ref()
-            .map_or(false, |set| !set.contains(ext.as_str()))
+            .is_some_and(|set| !set.contains(ext.as_str()))
         {
             continue;
         }
         if opts
             .regex_filter
             .as_ref()
-            .map_or(false, |re| !re.is_match(&name))
+            .is_some_and(|re| !re.is_match(&name))
         {
             continue;
         }
@@ -446,7 +446,7 @@ fn print_tree(
     write_fn: &mut dyn FnMut(&str),
 ) {
     let line = format_entry_line(&node.path, &node.name, opts.long_format);
-    write_fn(&format!("{}{}{}", prefix_continuation, connector, line));
+    write_fn(&format!("{prefix_continuation}{connector}{line}"));
 
     if node.is_dir {
         stats.dirs += 1;
@@ -462,9 +462,9 @@ fn print_tree(
             let is_last = idx == last_pos;
             let child_conn = if is_last { "└── " } else { "├── " };
             let new_prefix = if is_last {
-                format!("{}    ", prefix_continuation)
+                format!("{prefix_continuation}    ")
             } else {
-                format!("{}│   ", prefix_continuation)
+                format!("{prefix_continuation}│   ")
             };
 
             print_tree(child, child_conn, &new_prefix, stats, opts, write_fn);
@@ -549,7 +549,7 @@ fn format_entry_line(path: &Path, name: &str, long_format: bool) -> String {
                     styled_name, "Size:", size, "Modified:", modified, "Created:", created
                 )
             }
-            Err(e) => format!("{} (Error reading metadata: {})", styled_name, e),
+            Err(e) => format!("{styled_name} (Error reading metadata: {e})"),
         }
     } else {
         styled_name.to_string()
@@ -589,14 +589,14 @@ where
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             ParseError::Tree(TreeParseError {
-                details: TreeParseType::Io(format!("creating {:?}: {e}", parent)),
+                details: TreeParseType::Io(format!("creating {parent:?}: {e}")),
             })
         })?;
     }
 
     fs::write(&path, json_bytes).map_err(|e| {
         ParseError::Tree(TreeParseError {
-            details: TreeParseType::Io(format!("writing {:?}: {e}", path)),
+            details: TreeParseType::Io(format!("writing {path:?}: {e}")),
         })
     })
 }
