@@ -7,7 +7,6 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::Debug;
 use std::io;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::{fmt, fs};
