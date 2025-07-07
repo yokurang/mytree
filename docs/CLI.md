@@ -8,7 +8,8 @@ This document contains the help content for the `mytree` command-line program.
 
 ## `mytree`
 
-Mytree lets you view directory trees with optional hidden files, extension filtering, regex matching, and long-format metadata.
+You can use mytree to create custom visualizations of your project structure.The features supported are:1. Filtering results by file extensions2. Filtering results by regex matching3. Filtering results to include hidden files4. Enable long format output with file size and timestamps5. Sort results alphabetically (default)6. Sort results by file size7. Sort results by last updated timestamp8. Write results to a file as JSON
+     
 
 **Usage:** `mytree [OPTIONS] [PATH]`
 
@@ -20,18 +21,16 @@ Mytree lets you view directory trees with optional hidden files, extension filte
 
 ###### **Options:**
 
+* `-s`, `--sort <SORT_BY>` — Supply the argument with 'fs' to sort by file size, 'ts' to sort by last updated timestamp, or nothing to sort alphabetically (default)
+* `-e`, `--extension <EXTENSION_FILTERS>` — Filter by file extensions (e.g. -e rs -e toml)
 * `-a`, `--all` — Include hidden files and directories
 
   Default value: `false`
-* `-e`, `--extension <EXTENSIONS>` — Filter by file extensions (e.g. -e rs -e toml)
 * `-r`, `--regex <REGEX>` — Filter entries by matching name with regex
-* `-l`, `--long` — Enable long format output with size and timestamps
+* `-l`, `--long` — Enable long format output with file size and timestamps
 
   Default value: `false`
-* `-o`, `--output <OUTPUT>` — Write output to a file. Supports .gz compression
-* `--pager` — Send output to pager (e.g. less)
-
-  Default value: `false`
+* `-j`, `--json <WRITE_JSON>` — Write directory tree in JSON format
 
 
 
