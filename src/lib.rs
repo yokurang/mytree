@@ -42,7 +42,9 @@ pub struct Args {
     #[arg(
         short = 'e',
         long = "extension",
-        help = "Filter by file extensions (e.g. -e rs -e toml)"
+        value_delimiter = ' ',
+        num_args = 1..,
+        help = "Filter by file extensions (e.g. -e rs md toml)"
     )]
     pub extension_filters: Option<Vec<String>>,
 
@@ -315,6 +317,7 @@ fn create_ordered_row_level_entries(
         })?;
 
         let name = entry.file_name().to_string_lossy().to_string();
+        let is_dir = file_type.is_dir();
         let ext = entry
             .path()
             .extension()
@@ -325,19 +328,21 @@ fn create_ordered_row_level_entries(
         if !opts.show_hidden && name.starts_with('.') {
             continue;
         }
-        if opts
-            .extension_filters
-            .as_ref()
-            .is_some_and(|set| !set.contains(ext.as_str()))
-        {
-            continue;
-        }
-        if opts
-            .regex_filter
-            .as_ref()
-            .is_some_and(|re| !re.is_match(&name))
-        {
-            continue;
+        if !is_dir {
+            if opts
+                .extension_filters
+                .as_ref()
+                .is_some_and(|set| !set.contains(ext.as_str()))
+            {
+                continue;
+            }
+            if opts
+                .regex_filter
+                .as_ref()
+                .is_some_and(|re| !re.is_match(&name))
+            {
+                continue;
+            }
         }
 
         let md = entry.metadata().map_err(|e| {
@@ -392,8 +397,10 @@ fn build_directory_tree(root_path: &Path, opts: &PrintOptions) -> Result<TreeNod
     let entries = create_ordered_row_level_entries(root_path, opts)?;
     let mut kids = Vec::with_capacity(entries.len());
     for entry in entries {
-        kids.push(build_tree_node_from_entry_meta(entry, opts)?);
-    }
+        if let Some(node) = build_tree_node_from_entry_meta(entry, opts)? {
+            kids.push(node);
+        }
+    };
 
     Ok(TreeNode {
         name: root_path
@@ -411,26 +418,32 @@ fn build_directory_tree(root_path: &Path, opts: &PrintOptions) -> Result<TreeNod
 fn build_tree_node_from_entry_meta(
     entry: EntryMeta,
     opts: &PrintOptions,
-) -> Result<TreeNode, ParseError> {
+) -> Result<Option<TreeNode>, ParseError> {
     let children = if entry.is_dir {
         let subs = create_ordered_row_level_entries(&entry.path, opts)?;
         let mut nodes = Vec::with_capacity(subs.len());
         for sub in subs {
-            nodes.push(build_tree_node_from_entry_meta(sub, opts)?);
+            if let Some(child) = build_tree_node_from_entry_meta(sub, opts)? {
+                nodes.push(child);
+            }
         }
         Some(nodes)
     } else {
         None
     };
 
-    Ok(TreeNode {
+    if entry.is_dir && matches!(children, Some(ref v) if v.is_empty()) {
+        return Ok(None);
+    }
+
+    Ok(Some(TreeNode {
         name: entry.name,
         path: entry.path,
         size: entry.size,
         mtime: entry.mtime,
         is_dir: entry.is_dir,
         children,
-    })
+    }))
 }
 
 /*
@@ -439,35 +452,52 @@ Print the directory tree to standard out or write to JSON
 fn print_tree(
     node: &TreeNode,
     connector: &str,
-    prefix_continuation: &str,
+    prefix: &str,
     stats: &mut Stats,
     opts: &PrintOptions,
-    write_fn: &mut dyn FnMut(&str),
+    w: &mut dyn FnMut(&str),
 ) {
-    let line = format_entry_line(&node.path, &node.name, opts.long_format);
-    write_fn(&format!("{prefix_continuation}{connector}{line}"));
+    render_node(node, connector, prefix, opts, w);
+    accumulate(stats, node);
 
+    let Some(children) = node.children.as_ref() else { return };
+
+    let last = children.len().saturating_sub(1);
+    for (i, child) in children.iter().enumerate() {
+        let is_last = i == last;
+        let conn  = if is_last { "└── " } else { "├── " };
+        let next_prefix = if is_last {
+            format!("{prefix}    ")
+        } else {
+            format!("{prefix}│   ")
+        };
+        print_tree(child, conn, &next_prefix, stats, opts, w);
+    }
+}
+
+fn render_node(
+    node: &TreeNode,
+    connector: &str,
+    prefix: &str,
+    opts: &PrintOptions,
+    w: &mut dyn FnMut(&str),
+) {
+    if opts.long_format {
+        let (stats, name) = entry_lines(&node.path, &node.name);
+        w(&format!("{prefix}{connector}{name}"));
+        w(&format!("{prefix}    {stats}"));
+    } else {
+        let name = entry_lines(&node.path, &node.name).1;
+        w(&format!("{prefix}{connector}{name}"));
+    }
+}
+
+fn accumulate(stats: &mut Stats, node: &TreeNode) {
     if node.is_dir {
         stats.dirs += 1;
     } else {
         stats.files += 1;
         stats.size += node.size;
-    }
-
-    if let Some(children) = node.children.as_ref() {
-        let last_pos = children.len().saturating_sub(1);
-
-        for (idx, child) in children.iter().enumerate() {
-            let is_last = idx == last_pos;
-            let child_conn = if is_last { "└── " } else { "├── " };
-            let new_prefix = if is_last {
-                format!("{prefix_continuation}    ")
-            } else {
-                format!("{prefix_continuation}│   ")
-            };
-
-            print_tree(child, child_conn, &new_prefix, stats, opts, write_fn);
-        }
     }
 }
 
@@ -501,58 +531,49 @@ fn print_ascii_tree(root: &TreeNode, opts: &PrintOptions, root_path: &Path) {
     );
 }
 
-fn format_entry_line(path: &Path, name: &str, long_format: bool) -> String {
+fn entry_lines(path: &Path, name: &str) -> (String, String) {
     let is_hidden = name.starts_with('.') && name != "." && name != "..";
     let styled_name = if path.is_dir() {
-        if is_hidden {
-            name.blue().bold().dimmed().underline()
-        } else {
-            name.blue().bold()
-        }
+        if is_hidden { name.blue().bold().dimmed().underline() }
+        else          { name.blue().bold() }
     } else if is_hidden {
         name.dimmed().underline()
     } else {
-        match path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-        {
-            Some(ext) if ext == "rs" => name.red().bold(),
-            Some(ext) if ext == "py" => name.yellow().bold(),
-            Some(ext) if ["c", "cpp", "h", "hpp"].contains(&ext.as_str()) => name.cyan().bold(),
-            Some(ext) if ext == "cs" => name.magenta().bold(),
-            Some(ext) if ext == "ml" || ext == "mli" => name.bright_green().bold(),
-            Some(ext) if ext == "md" => name.white().italic(),
-            Some(ext) if ext == "txt" => name.dimmed(),
-            Some(ext) if ext == "json" => name.bright_yellow().bold(),
-            _ => name.normal(),
+        match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()) {
+            Some(ext) if ext == "rs"                                 => name.red().bold(),
+            Some(ext) if ext == "py"                                 => name.yellow().bold(),
+            Some(ext) if ["c","cpp","h","hpp"].contains(&ext.as_str())=> name.cyan().bold(),
+            Some(ext) if ext == "cs"                                 => name.magenta().bold(),
+            Some(ext) if ext == "ml" || ext == "mli"                 => name.bright_green().bold(),
+            Some(ext) if ext == "md"                                 => name.white().italic(),
+            Some(ext) if ext == "txt"                                => name.dimmed(),
+            Some(ext) if ext == "json"                               => name.bright_yellow().bold(),
+            _                                                        => name.normal(),
         }
     };
-
-    if long_format {
-        match fs::metadata(path) {
-            Ok(metadata) => {
-                let size = format_size(metadata.len());
-                let modified = metadata
-                    .modified()
-                    .ok()
-                    .map(format_time)
-                    .unwrap_or_else(|| "-".to_string());
-                let created = metadata
-                    .created()
-                    .ok()
-                    .map(format_time)
-                    .unwrap_or_else(|| "-".to_string());
-                format!(
-                    "{}\n      {:<10} {:<12} {:<10} {:<20} {:<10} {:<20}",
-                    styled_name, "Size:", size, "Modified:", modified, "Created:", created
-                )
-            }
-            Err(e) => format!("{styled_name} (Error reading metadata: {e})"),
+    
+    let (size, modified, created) = match fs::metadata(path) {
+        Ok(ref md) => {
+            let size     = format_size(md.len());
+            let modified = md.modified()
+                .ok()
+                .map(format_time)
+                .unwrap_or_else(|| "-".into());
+            let created  = md.created()
+                .ok()
+                .map(format_time)
+                .unwrap_or_else(|| "-".into());
+            (size, modified, created)
         }
-    } else {
-        styled_name.to_string()
-    }
+        Err(_) => ("-".into(), "-".into(), "-".into()),
+    };
+
+    let stats_line = format!(
+        "{:<10} {:<12} {:<10} {:<20} {:<10} {:<20}",
+        "Size:", size, "Modified:", modified, "Created:", created
+    );
+
+    (stats_line, styled_name.to_string())
 }
 
 fn format_size(bytes: u64) -> String {
