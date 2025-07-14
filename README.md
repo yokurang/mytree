@@ -17,14 +17,14 @@ cargo install mytree  # grabs the latest release from crates.io
 
 ## Features
 
-1. Printing directories and files in alphabetical order [x]
-2. Filtering results by file extension [x]
-3. Filtering results by regex [x]
-4. Filtering results by hidden-items [x]
-5. Toggle long-format meta-data [x]
-6. Sort results by file-size [x]
-7. Sort results by last_updated_time [x]
-8. Write results as JSON to a file [x]
+1. Printing directories and files in alphabetical order [x] / tested
+2. Filtering results by file extension [x] / tested
+3. Filtering results by regex [x] / tested
+4. Filtering results by hidden-items [x] / tested
+5. Toggle long-format meta-data [x] / tested
+6. Sort results by file-size [x] / tested
+7. Sort results by last_updated_time [x] / tested
+8. Write results as JSON to a file [x] / tested
 
 **Please send feature requests!** I would love to hear what would make *mytree* even more useful.
 

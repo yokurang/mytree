@@ -74,7 +74,10 @@ pub struct Args {
     #[arg(
         short = 'j',
         long = "json",
-        help = "Write directory tree in JSON format"
+        value_name = "FILE",
+        num_args = 0..=1,
+        default_missing_value = "tree.json",
+        help = "Write directory tree as JSON (optionally specify FILE)"
     )]
     pub write_json: Option<String>,
 }
@@ -375,7 +378,7 @@ fn sort_meta_entries(mut meta_entries: Vec<EntryMeta>, sort_criteria: &SortBy) -
             meta_entries.sort_by(|a, b| a.size.cmp(&b.size));
         }
         SortBy::LastUpdatedTimestamp => {
-            meta_entries.sort_by(|a, b| a.mtime.cmp(&b.mtime));
+            meta_entries.sort_by(|a, b| b.mtime.cmp(&a.mtime));
         }
     }
     meta_entries
@@ -596,16 +599,12 @@ fn write_tree_json<P>(nodes: &[TreeNode], dest: Option<P>) -> Result<(), ParseEr
 where
     P: AsRef<Path>,
 {
-    let json_bytes = serde_json::to_vec_pretty(nodes).map_err(|e| {
-        ParseError::Tree(TreeParseError {
-            details: TreeParseType::InvalidInput(format!("serialising JSON: {e}")),
-        })
-    })?;
-
-    let path: PathBuf = dest
+    let raw_path = dest
         .map(|p| p.as_ref().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("file.json"));
-
+        .unwrap_or_else(|| PathBuf::from("tree.json"));
+    
+    let path = ensure_json_path(raw_path);
+    
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             ParseError::Tree(TreeParseError {
@@ -614,11 +613,34 @@ where
         })?;
     }
 
+    let json_bytes = serde_json::to_vec_pretty(nodes).map_err(|e| {
+        ParseError::Tree(TreeParseError {
+            details: TreeParseType::InvalidInput(format!("serialising JSON: {e}")),
+        })
+    })?;
+
     fs::write(&path, json_bytes).map_err(|e| {
         ParseError::Tree(TreeParseError {
             details: TreeParseType::Io(format!("writing {path:?}: {e}")),
         })
     })
+}
+
+fn ensure_json_path<P: AsRef<Path>>(p: P) -> PathBuf {
+    let path = p.as_ref();
+    
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        == Some(true)
+    {
+        return path.to_path_buf();
+    }
+    
+    let mut dir = path.to_path_buf();
+    dir.push("tree.json");
+    dir
 }
 
 fn emit_json(tree: &TreeNode, dest_raw: &str) -> Result<(), ParseError> {
