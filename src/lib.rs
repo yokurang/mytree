@@ -403,7 +403,7 @@ fn build_directory_tree(root_path: &Path, opts: &PrintOptions) -> Result<TreeNod
         if let Some(node) = build_tree_node_from_entry_meta(entry, opts)? {
             kids.push(node);
         }
-    };
+    }
 
     Ok(TreeNode {
         name: root_path
@@ -463,12 +463,14 @@ fn print_tree(
     render_node(node, connector, prefix, opts, w);
     accumulate(stats, node);
 
-    let Some(children) = node.children.as_ref() else { return };
+    let Some(children) = node.children.as_ref() else {
+        return;
+    };
 
     let last = children.len().saturating_sub(1);
     for (i, child) in children.iter().enumerate() {
         let is_last = i == last;
-        let conn  = if is_last { "└── " } else { "├── " };
+        let conn = if is_last { "└── " } else { "├── " };
         let next_prefix = if is_last {
             format!("{prefix}    ")
         } else {
@@ -537,32 +539,41 @@ fn print_ascii_tree(root: &TreeNode, opts: &PrintOptions, root_path: &Path) {
 fn entry_lines(path: &Path, name: &str) -> (String, String) {
     let is_hidden = name.starts_with('.') && name != "." && name != "..";
     let styled_name = if path.is_dir() {
-        if is_hidden { name.blue().bold().dimmed().underline() }
-        else          { name.blue().bold() }
+        if is_hidden {
+            name.blue().bold().dimmed().underline()
+        } else {
+            name.blue().bold()
+        }
     } else if is_hidden {
         name.dimmed().underline()
     } else {
-        match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()) {
-            Some(ext) if ext == "rs"                                 => name.red().bold(),
-            Some(ext) if ext == "py"                                 => name.yellow().bold(),
-            Some(ext) if ["c","cpp","h","hpp"].contains(&ext.as_str())=> name.cyan().bold(),
-            Some(ext) if ext == "cs"                                 => name.magenta().bold(),
-            Some(ext) if ext == "ml" || ext == "mli"                 => name.bright_green().bold(),
-            Some(ext) if ext == "md"                                 => name.white().italic(),
-            Some(ext) if ext == "txt"                                => name.dimmed(),
-            Some(ext) if ext == "json"                               => name.bright_yellow().bold(),
-            _                                                        => name.normal(),
+        match path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+        {
+            Some(ext) if ext == "rs" => name.red().bold(),
+            Some(ext) if ext == "py" => name.yellow().bold(),
+            Some(ext) if ["c", "cpp", "h", "hpp"].contains(&ext.as_str()) => name.cyan().bold(),
+            Some(ext) if ext == "cs" => name.magenta().bold(),
+            Some(ext) if ext == "ml" || ext == "mli" => name.bright_green().bold(),
+            Some(ext) if ext == "md" => name.white().italic(),
+            Some(ext) if ext == "txt" => name.dimmed(),
+            Some(ext) if ext == "json" => name.bright_yellow().bold(),
+            _ => name.normal(),
         }
     };
-    
+
     let (size, modified, created) = match fs::metadata(path) {
         Ok(ref md) => {
-            let size     = format_size(md.len());
-            let modified = md.modified()
+            let size = format_size(md.len());
+            let modified = md
+                .modified()
                 .ok()
                 .map(format_time)
                 .unwrap_or_else(|| "-".into());
-            let created  = md.created()
+            let created = md
+                .created()
                 .ok()
                 .map(format_time)
                 .unwrap_or_else(|| "-".into());
@@ -602,9 +613,9 @@ where
     let raw_path = dest
         .map(|p| p.as_ref().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("tree.json"));
-    
+
     let path = ensure_json_path(raw_path);
-    
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             ParseError::Tree(TreeParseError {
@@ -628,7 +639,7 @@ where
 
 fn ensure_json_path<P: AsRef<Path>>(p: P) -> PathBuf {
     let path = p.as_ref();
-    
+
     if path
         .extension()
         .and_then(|e| e.to_str())
@@ -637,7 +648,7 @@ fn ensure_json_path<P: AsRef<Path>>(p: P) -> PathBuf {
     {
         return path.to_path_buf();
     }
-    
+
     let mut dir = path.to_path_buf();
     dir.push("tree.json");
     dir
